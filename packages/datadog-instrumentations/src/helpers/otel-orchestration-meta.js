@@ -28,8 +28,8 @@ function getSpanMeta (span) {
   if (ddSpan?.context) {
     const ctx = ddSpan.context()
     return {
-      traceId: normalizeTraceId(ctx._traceId ?? ctx.toTraceId?.()),
-      spanId: normalizeSpanId(ctx._spanId ?? ctx.toSpanId?.()),
+      traceId: normalizeTraceId(ctx._traceId),
+      spanId: normalizeSpanId(ctx._spanId),
     }
   }
 

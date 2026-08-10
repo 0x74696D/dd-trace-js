@@ -18,6 +18,7 @@ const {
   publishOrchestrationMetaSync,
   publishOrchestrationSpanMetaSync,
   readOrchestrationSpanMetaSync,
+  reconcileOrchestrationHttpParent,
 } = require('../../src/helpers/otel-orchestration-store')
 const { createOrchestrationMeta } = require('../../src/helpers/otel-orchestration-export')
 const { publishHttpParentMeta } = require('../../src/helpers/otel-orchestration-http-link')
@@ -129,6 +130,25 @@ describe('otel-orchestration-store', () => {
 
     assert.equal(meta.parentId, '0000000000000004')
     assert.equal(meta.traceId, '00000000000000000000000000000001')
+  })
+
+  it('reconciles orchestration metadata when the HTTP parent arrives after instance creation', () => {
+    publishOrchestrationMetaSync('abc123', {
+      traceId: '00000000000000000000000000000001',
+      spanId: '0000000000000002',
+      parentId: '0000000000000099',
+      startTime: Date.now(),
+      status: 'open',
+    })
+
+    const updated = reconcileOrchestrationHttpParent('abc123', {
+      traceId: '00000000000000000000000000000001',
+      spanId: '0000000000000004',
+    })
+
+    assert.equal(updated.parentId, '0000000000000004')
+    assert.equal(updated.httpParentSpanId, '0000000000000004')
+    assert.equal(readOrchestrationSpanMetaSync('abc123').parentId, '0000000000000004')
   })
 
   it('exports one orchestration span on completion', () => {

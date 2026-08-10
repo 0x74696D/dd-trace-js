@@ -13,6 +13,10 @@ const {
   createOrchestrationMeta,
   exportOrchestrationSpanFromMeta,
 } = require('./otel-orchestration-export')
+const {
+  applyHttpParentToMeta,
+  resolveHttpParentForOrchestration,
+} = require('./otel-orchestration-http-link')
 
 const TABLE_NAME = 'DDAzureOrchestrationSpans'
 const TABLE_PARTITION_KEY = 'orch'
@@ -132,12 +136,39 @@ function publishOrchestrationSpanMetaSync (instanceId, span) {
   })
 }
 
-function ensureOrchestrationMeta (instanceId, invocationContext, functionName) {
-  const existing = readOrchestrationSpanMetaSync(instanceId, invocationContext?.traceContext)
-  if (existing?.traceId && existing?.spanId) return existing
+function reconcileOrchestrationHttpParent (instanceId, httpParent) {
+  if (!instanceId || !httpParent?.spanId) return undefined
 
-  const meta = createOrchestrationMeta(instanceId, invocationContext, functionName)
-  publishOrchestrationMetaSync(instanceId, meta)
+  const existing = readOrchestrationSpanMetaSync(instanceId)
+  if (!existing?.traceId || !existing?.spanId) return undefined
+
+  const updated = applyHttpParentToMeta(existing, httpParent)
+  if (updated.parentId === existing.parentId && updated.httpParentSpanId === existing.httpParentSpanId) {
+    return existing
+  }
+
+  publishOrchestrationMetaSync(instanceId, updated)
+  return updated
+}
+
+function ensureOrchestrationMeta (instanceId, invocationContext, functionName) {
+  const traceContext = invocationContext?.traceContext
+  let meta = readOrchestrationSpanMetaSync(instanceId, traceContext)
+
+  if (!meta?.traceId || !meta?.spanId) {
+    meta = createOrchestrationMeta(instanceId, invocationContext, functionName)
+    publishOrchestrationMetaSync(instanceId, meta)
+  }
+
+  const httpParent = resolveHttpParentForOrchestration(instanceId, traceContext)
+  if (httpParent?.spanId) {
+    const updated = applyHttpParentToMeta(meta, httpParent)
+    if (updated.parentId !== meta.parentId || updated.httpParentSpanId !== meta.httpParentSpanId) {
+      publishOrchestrationMetaSync(instanceId, updated)
+      meta = updated
+    }
+  }
+
   return meta
 }
 
@@ -208,8 +239,15 @@ function clearOrchestrationSpanMeta (instanceId) {
 }
 
 function completeOrchestrationSpan (tracerName, instanceId, invocationContext, functionName, error) {
-  const meta = readOrchestrationSpanMetaSync(instanceId, invocationContext?.traceContext)
+  let meta = readOrchestrationSpanMetaSync(instanceId, invocationContext?.traceContext)
   if (!meta || meta.status === 'completed') return false
+
+  const httpParent = resolveHttpParentForOrchestration(instanceId, invocationContext?.traceContext)
+  if (httpParent?.spanId) {
+    meta = applyHttpParentToMeta(meta, httpParent)
+    publishOrchestrationMetaSync(instanceId, meta)
+  }
+
   if (!markOrchestrationMetaCompleted(instanceId)) return false
 
   const exported = exportOrchestrationSpanFromMeta(
@@ -240,4 +278,5 @@ module.exports = {
   publishOrchestrationSpanMetaSync,
   readOrchestrationSpanMetaAsync,
   readOrchestrationSpanMetaSync,
+  reconcileOrchestrationHttpParent,
 }
