@@ -13,6 +13,9 @@ const {
   traceContextFromMeta,
 } = require('../../src/helpers/otel-orchestration-meta')
 const {
+  completeOrchestrationSpan,
+  ensureOrchestrationMeta,
+  publishOrchestrationMetaSync,
   publishOrchestrationSpanMetaSync,
   readOrchestrationSpanMetaSync,
 } = require('../../src/helpers/otel-orchestration-store')
@@ -88,9 +91,47 @@ describe('otel-orchestration-store', () => {
       {
         traceId: '00000000000000000000000000000001',
         spanId: '0000000000000002',
+        startTime: readOrchestrationSpanMetaSync('abc123').startTime,
+        status: 'open',
       },
     )
     assert.ok(fs.existsSync(path.join(process.env.DD_ORCHESTRATION_STORE_DIR, 'abc123.json')))
+  })
+
+  it('creates orchestration metadata once per instance', () => {
+    const invocationContext = {
+      traceContext: {
+        traceParent: '00-00000000000000000000000000000001-0000000000000003-00',
+      },
+    }
+
+    const first = ensureOrchestrationMeta('abc123', invocationContext, 'PizzaOrderOrchestration')
+    const second = ensureOrchestrationMeta('abc123', invocationContext, 'PizzaOrderOrchestration')
+
+    assert.equal(first.spanId, second.spanId)
+    assert.equal(first.traceId, '00000000000000000000000000000001')
+    assert.equal(first.status, 'open')
+  })
+
+  it('exports one orchestration span on completion', () => {
+    process.env.DD_TRACE_OTEL_ENABLED = 'true'
+    process.env.DD_TRACE_AZURE_DURABLE_FUNCTIONS_ENABLED = 'false'
+
+    const ddtrace = require('../../../dd-trace')
+    ddtrace.init({ plugins: false, sampleRate: 1 })
+    new ddtrace.TracerProvider().register()
+
+    const invocationContext = {
+      traceContext: {
+        traceParent: '00-00000000000000000000000000000001-0000000000000003-00',
+      },
+    }
+
+    const meta = ensureOrchestrationMeta('abc123', invocationContext, 'PizzaOrderOrchestration')
+    assert.equal(completeOrchestrationSpan('@azure/durable-functions', 'abc123', invocationContext, 'PizzaOrderOrchestration'), true)
+    assert.equal(completeOrchestrationSpan('@azure/durable-functions', 'abc123', invocationContext, 'PizzaOrderOrchestration'), false)
+    assert.equal(readOrchestrationSpanMetaSync('abc123'), undefined)
+    assert.equal(meta.spanId.length, 16)
   })
 
   it('parents activity spans to orchestration metadata from the shared store', () => {

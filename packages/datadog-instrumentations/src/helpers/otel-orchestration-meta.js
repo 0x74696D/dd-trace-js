@@ -84,6 +84,8 @@ function traceContextFromMeta (meta) {
 module.exports = {
   appendOrchestrationSpanToTraceState,
   getSpanMeta,
+  normalizeSpanId,
+  normalizeTraceId,
   parseOrchestrationMetaFromTraceContext,
   traceContextFromMeta,
 }

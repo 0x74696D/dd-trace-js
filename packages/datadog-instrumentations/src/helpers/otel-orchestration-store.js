@@ -9,6 +9,10 @@ const {
   getSpanMeta,
   parseOrchestrationMetaFromTraceContext,
 } = require('./otel-orchestration-meta')
+const {
+  createOrchestrationMeta,
+  exportOrchestrationSpanFromMeta,
+} = require('./otel-orchestration-export')
 
 const TABLE_NAME = 'DDAzureOrchestrationSpans'
 const TABLE_PARTITION_KEY = 'orch'
@@ -38,6 +42,14 @@ function readMetaFileSync (instanceId) {
     return JSON.parse(contents)
   } catch {
     return undefined
+  }
+}
+
+function deleteMetaFileSync (instanceId) {
+  try {
+    fs.unlinkSync(getMetaFilePath(instanceId))
+  } catch {
+    // ignore missing files
   }
 }
 
@@ -83,12 +95,17 @@ async function ensureTable () {
   return client
 }
 
-function publishOrchestrationSpanMetaSync (instanceId, span) {
-  const meta = getSpanMeta(span)
-  if (!instanceId || !meta?.traceId || !meta?.spanId) return
+function normalizeMeta (meta) {
+  if (!meta?.traceId || !meta?.spanId) return undefined
+  return meta
+}
 
-  META_CACHE.set(instanceId, meta)
-  writeMetaFileSync(instanceId, meta)
+function publishOrchestrationMetaSync (instanceId, meta) {
+  const normalized = normalizeMeta(meta)
+  if (!instanceId || !normalized) return
+
+  META_CACHE.set(instanceId, normalized)
+  writeMetaFileSync(instanceId, normalized)
 
   const client = getTableClient()
   if (!client) return
@@ -97,10 +114,31 @@ function publishOrchestrationSpanMetaSync (instanceId, span) {
     .then(table => table.upsertEntity({
       partitionKey: TABLE_PARTITION_KEY,
       rowKey: instanceId,
-      traceId: meta.traceId,
-      spanId: meta.spanId,
+      traceId: normalized.traceId,
+      spanId: normalized.spanId,
+      startTime: normalized.startTime,
+      status: normalized.status || 'open',
     }, 'Replace'))
     .catch(() => {})
+}
+
+function publishOrchestrationSpanMetaSync (instanceId, span) {
+  const meta = getSpanMeta(span)
+  if (!meta) return
+  publishOrchestrationMetaSync(instanceId, {
+    ...meta,
+    startTime: Date.now(),
+    status: 'open',
+  })
+}
+
+function ensureOrchestrationMeta (instanceId, invocationContext, functionName) {
+  const existing = readOrchestrationSpanMetaSync(instanceId, invocationContext?.traceContext)
+  if (existing?.traceId && existing?.spanId) return existing
+
+  const meta = createOrchestrationMeta(instanceId, invocationContext, functionName)
+  publishOrchestrationMetaSync(instanceId, meta)
+  return meta
 }
 
 function readOrchestrationSpanMetaSync (instanceId, traceContext) {
@@ -138,6 +176,8 @@ async function readOrchestrationSpanMetaAsync (instanceId, traceContext) {
       const meta = {
         traceId: entity.traceId,
         spanId: entity.spanId,
+        startTime: entity.startTime,
+        status: entity.status,
       }
       if (meta.traceId && meta.spanId) {
         META_CACHE.set(instanceId, meta)
@@ -152,6 +192,36 @@ async function readOrchestrationSpanMetaAsync (instanceId, traceContext) {
   return undefined
 }
 
+function markOrchestrationMetaCompleted (instanceId) {
+  const meta = readOrchestrationSpanMetaSync(instanceId)
+  if (!meta || meta.status === 'completed') return false
+
+  const completedMeta = { ...meta, status: 'completed' }
+  publishOrchestrationMetaSync(instanceId, completedMeta)
+  return true
+}
+
+function clearOrchestrationSpanMeta (instanceId) {
+  if (!instanceId) return
+  META_CACHE.delete(instanceId)
+  deleteMetaFileSync(instanceId)
+}
+
+function completeOrchestrationSpan (tracerName, instanceId, invocationContext, functionName, error) {
+  const meta = readOrchestrationSpanMetaSync(instanceId, invocationContext?.traceContext)
+  if (!meta || meta.status === 'completed') return false
+  if (!markOrchestrationMetaCompleted(instanceId)) return false
+
+  const exported = exportOrchestrationSpanFromMeta(
+    tracerName,
+    { ...meta, functionName: meta.functionName || functionName },
+    { error, endTime: Date.now() },
+  )
+
+  clearOrchestrationSpanMeta(instanceId)
+  return exported
+}
+
 function injectOrchestrationMetaIntoTraceState (traceContext, meta) {
   if (!traceContext || !meta?.spanId) return traceContext
 
@@ -162,7 +232,11 @@ function injectOrchestrationMetaIntoTraceState (traceContext, meta) {
 }
 
 module.exports = {
+  clearOrchestrationSpanMeta,
+  completeOrchestrationSpan,
+  ensureOrchestrationMeta,
   injectOrchestrationMetaIntoTraceState,
+  publishOrchestrationMetaSync,
   publishOrchestrationSpanMetaSync,
   readOrchestrationSpanMetaAsync,
   readOrchestrationSpanMetaSync,
