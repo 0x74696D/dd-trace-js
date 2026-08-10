@@ -173,24 +173,31 @@ function ensureOrchestrationMeta (instanceId, invocationContext, functionName) {
 }
 
 function readOrchestrationSpanMetaSync (instanceId, traceContext) {
-  const fromTraceState = parseOrchestrationMetaFromTraceContext(traceContext)
-  if (fromTraceState?.traceId && fromTraceState?.spanId) {
-    return fromTraceState
-  }
+  let meta
 
   if (instanceId && META_CACHE.has(instanceId)) {
-    return META_CACHE.get(instanceId)
-  }
-
-  if (instanceId) {
+    meta = META_CACHE.get(instanceId)
+  } else if (instanceId) {
     const fromFile = readMetaFileSync(instanceId)
     if (fromFile?.traceId && fromFile?.spanId) {
       META_CACHE.set(instanceId, fromFile)
-      return fromFile
+      meta = fromFile
     }
   }
 
-  return undefined
+  const fromTraceState = parseOrchestrationMetaFromTraceContext(traceContext)
+  if (fromTraceState?.traceId && fromTraceState?.spanId) {
+    if (meta) {
+      return {
+        ...meta,
+        traceId: fromTraceState.traceId,
+        spanId: fromTraceState.spanId,
+      }
+    }
+    return fromTraceState
+  }
+
+  return meta
 }
 
 async function readOrchestrationSpanMetaAsync (instanceId, traceContext) {

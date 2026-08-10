@@ -151,6 +151,27 @@ describe('otel-orchestration-store', () => {
     assert.equal(readOrchestrationSpanMetaSync('abc123').parentId, '0000000000000004')
   })
 
+  it('preserves reconciled HTTP parent when tracestate is present at export time', () => {
+    publishOrchestrationMetaSync('abc123', {
+      traceId: '00000000000000000000000000000001',
+      spanId: '0000000000000002',
+      parentId: '0000000000000004',
+      httpParentSpanId: '0000000000000004',
+      startTime: Date.now(),
+      status: 'open',
+      functionName: 'PizzaPartyOrchestration',
+    })
+
+    const merged = readOrchestrationSpanMetaSync('abc123', {
+      traceParent: '00-00000000000000000000000000000001-0000000000000099-00',
+      traceState: 'dd=s:1,dd=o:0000000000000002',
+    })
+
+    assert.equal(merged.parentId, '0000000000000004')
+    assert.equal(merged.httpParentSpanId, '0000000000000004')
+    assert.equal(merged.spanId, '0000000000000002')
+  })
+
   it('exports one orchestration span on completion', () => {
     process.env.DD_TRACE_OTEL_ENABLED = 'true'
     process.env.DD_TRACE_AZURE_DURABLE_FUNCTIONS_ENABLED = 'false'
