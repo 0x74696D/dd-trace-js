@@ -4,7 +4,7 @@ const TRACE_FLAGS_SAMPLED = '01'
 const TRACESTATE_ORCH_PREFIX = 'dd=o:'
 
 function normalizeTraceId (traceId) {
-  if (!traceId) return undefined
+  if (!traceId) return
   if (typeof traceId === 'string' && /^[0-9a-f]+$/i.test(traceId)) {
     return traceId.padStart(32, '0').slice(-32)
   }
@@ -13,7 +13,7 @@ function normalizeTraceId (traceId) {
 }
 
 function normalizeSpanId (spanId) {
-  if (!spanId) return undefined
+  if (!spanId) return
   if (typeof spanId === 'string' && /^[0-9a-f]+$/i.test(spanId)) {
     return spanId.padStart(16, '0').slice(-16)
   }
@@ -22,7 +22,7 @@ function normalizeSpanId (spanId) {
 }
 
 function getSpanMeta (span) {
-  if (!span) return undefined
+  if (!span) return
 
   const ddSpan = span._ddSpan
   if (ddSpan?.context) {
@@ -34,7 +34,7 @@ function getSpanMeta (span) {
   }
 
   const spanContext = span.spanContext?.()
-  if (spanContext?.traceId && spanContext?.spanId) {
+  if (spanContext?.traceId && spanContext.spanId) {
     return {
       traceId: normalizeTraceId(spanContext.traceId),
       spanId: normalizeSpanId(spanContext.spanId),
@@ -44,21 +44,21 @@ function getSpanMeta (span) {
 
 function parseOrchestrationMetaFromTraceContext (traceContext) {
   const traceState = traceContext?.traceState
-  if (!traceState || typeof traceState !== 'string') return undefined
+  if (!traceState || typeof traceState !== 'string') return
 
   const orchEntry = traceState
     .split(',')
     .map(entry => entry.trim())
     .find(entry => entry.startsWith(TRACESTATE_ORCH_PREFIX))
 
-  if (!orchEntry) return undefined
+  if (!orchEntry) return
 
   const spanId = orchEntry.slice(TRACESTATE_ORCH_PREFIX.length)
   const traceParent = traceContext?.traceParent
-  if (!spanId || !traceParent) return undefined
+  if (!spanId || !traceParent) return
 
   const parts = traceParent.split('-')
-  if (parts.length < 4) return undefined
+  if (parts.length < 4) return
 
   return {
     traceId: parts[1],
@@ -74,7 +74,7 @@ function appendOrchestrationSpanToTraceState (traceState, spanId) {
 }
 
 function traceContextFromMeta (meta) {
-  if (!meta?.traceId || !meta?.spanId) return undefined
+  if (!meta?.traceId || !meta?.spanId) return
 
   return {
     traceParent: `00-${meta.traceId}-${meta.spanId}-${TRACE_FLAGS_SAMPLED}`,

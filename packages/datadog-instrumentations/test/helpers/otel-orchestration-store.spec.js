@@ -63,8 +63,8 @@ describe('otel-orchestration-store', () => {
   let previousStoreDir
 
   beforeEach(() => {
-    previousStoreDir = process.env.DD_ORCHESTRATION_STORE_DIR
-    process.env.DD_ORCHESTRATION_STORE_DIR = path.join(
+    previousStoreDir = process.env.DD_TRACE_AZURE_ORCHESTRATION_STORE_DIR
+    process.env.DD_TRACE_AZURE_ORCHESTRATION_STORE_DIR = path.join(
       os.tmpdir(),
       `dd-orch-test-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     )
@@ -72,9 +72,9 @@ describe('otel-orchestration-store', () => {
 
   afterEach(() => {
     if (previousStoreDir === undefined) {
-      delete process.env.DD_ORCHESTRATION_STORE_DIR
+      delete process.env.DD_TRACE_AZURE_ORCHESTRATION_STORE_DIR
     } else {
-      process.env.DD_ORCHESTRATION_STORE_DIR = previousStoreDir
+      process.env.DD_TRACE_AZURE_ORCHESTRATION_STORE_DIR = previousStoreDir
     }
   })
 
@@ -99,7 +99,7 @@ describe('otel-orchestration-store', () => {
         status: 'open',
       },
     )
-    assert.ok(fs.existsSync(path.join(process.env.DD_ORCHESTRATION_STORE_DIR, 'abc123.json')))
+    assert.ok(fs.existsSync(path.join(process.env.DD_TRACE_AZURE_ORCHESTRATION_STORE_DIR, 'abc123.json')))
   })
 
   it('creates orchestration metadata once per instance', () => {
@@ -236,8 +236,11 @@ describe('otel-orchestration-store', () => {
     }
 
     const meta = ensureOrchestrationMeta('abc123', invocationContext, 'PizzaOrderOrchestration')
-    assert.equal(completeOrchestrationSpan('@azure/durable-functions', 'abc123', invocationContext, 'PizzaOrderOrchestration'), true)
-    assert.equal(completeOrchestrationSpan('@azure/durable-functions', 'abc123', invocationContext, 'PizzaOrderOrchestration'), false)
+    const complete = () => completeOrchestrationSpan(
+      '@azure/durable-functions', 'abc123', invocationContext, 'PizzaOrderOrchestration'
+    )
+    assert.equal(complete(), true)
+    assert.equal(complete(), false)
     assert.equal(readOrchestrationSpanMetaSync('abc123'), undefined)
     assert.equal(meta.spanId.length, 16)
   })

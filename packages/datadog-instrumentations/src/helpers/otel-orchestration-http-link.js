@@ -41,24 +41,22 @@ function publishPendingHttpParent (meta) {
 }
 
 function peekHttpParentForInstance (instanceId) {
-  if (!instanceId) return undefined
+  if (!instanceId) return
   return httpParentByInstance.get(String(instanceId))
 }
 
 function peekPendingHttpParent (traceId) {
-  if (!traceId) return undefined
+  if (!traceId) return
 
   const normalized = normalizeTraceId(traceId)
   const direct = pendingHttpParentByTraceId.get(normalized)
   if (direct) return direct
 
-  for (const [key, meta] of pendingHttpParentByTraceId.entries()) {
+  for (const [key, meta] of pendingHttpParentByTraceId) {
     if (traceIdsEquivalent(key, normalized)) {
       return meta
     }
   }
-
-  return undefined
 }
 
 function resolveHttpParentForOrchestration (instanceId, traceContext) {
@@ -66,7 +64,7 @@ function resolveHttpParentForOrchestration (instanceId, traceContext) {
   if (fromInstance) return fromInstance
 
   const traceParent = traceContext?.traceParent
-  if (!traceParent) return undefined
+  if (!traceParent) return
 
   const traceId = traceParent.split('-')[1]
   return peekPendingHttpParent(traceId)
@@ -83,13 +81,9 @@ function applyHttpParentToMeta (meta, httpParent) {
   }
 }
 
-/**
- * Patch the application's DurableClient class.
- *
- * The class must be handed in by the module hook: requiring `durable-functions`
- * from inside the tracer would resolve against the tracer's own dependencies,
- * not the application's copy, so the patch would target the wrong class.
- */
+// The class must be handed in by the module hook: requiring `durable-functions`
+// from inside the tracer would resolve against the tracer's own dependencies,
+// not the application's copy, so the patch would target the wrong class.
 function patchDurableClient (DurableClient) {
   const shimmer = require('../../../datadog-shimmer')
   if (typeof DurableClient?.prototype?.startNew !== 'function') return

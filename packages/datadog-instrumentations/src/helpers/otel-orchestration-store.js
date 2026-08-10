@@ -4,6 +4,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
+const { getEnvironmentVariable } = require('../../../dd-trace/src/config/helper')
 const {
   appendOrchestrationSpanToTraceState,
   getSpanMeta,
@@ -28,7 +29,8 @@ let tableClientResolved = false
 let tableEnsured = false
 
 function getStoreDirectory () {
-  return process.env.DD_ORCHESTRATION_STORE_DIR || path.join(os.tmpdir(), 'dd-orchestration-spans')
+  return getEnvironmentVariable('DD_TRACE_AZURE_ORCHESTRATION_STORE_DIR') ||
+    path.join(os.tmpdir(), 'dd-orchestration-spans')
 }
 
 function getMetaFilePath (instanceId) {
@@ -45,9 +47,7 @@ function readMetaFileSync (instanceId) {
   try {
     const contents = fs.readFileSync(getMetaFilePath(instanceId), 'utf8')
     return JSON.parse(contents)
-  } catch {
-    return undefined
-  }
+  } catch {}
 }
 
 function deleteMetaFileSync (instanceId) {
@@ -70,10 +70,12 @@ function getTableClient () {
   tableClientResolved = true
   tableClient = null
 
-  const connectionString = process.env.AzureWebJobsStorage
+  const connectionString = getEnvironmentVariable('AzureWebJobsStorage')
   if (!connectionString) return null
 
   try {
+    // Provided by the Azure Functions host, so it is never a tracer dependency.
+    // eslint-disable-next-line n/no-missing-require
     const { TableClient } = require('@azure/data-tables')
     const resolvedConnectionString = connectionString === 'UseDevelopmentStorage=true'
       ? getAzuriteConnectionString()
@@ -101,7 +103,7 @@ async function ensureTable () {
 }
 
 function normalizeMeta (meta) {
-  if (!meta?.traceId || !meta?.spanId) return undefined
+  if (!meta?.traceId || !meta?.spanId) return
   return meta
 }
 
@@ -142,10 +144,10 @@ function publishOrchestrationSpanMetaSync (instanceId, span) {
 }
 
 function reconcileOrchestrationHttpParent (instanceId, httpParent) {
-  if (!instanceId || !httpParent?.spanId) return undefined
+  if (!instanceId || !httpParent?.spanId) return
 
   const existing = readOrchestrationSpanMetaSync(instanceId)
-  if (!existing?.traceId || !existing?.spanId) return undefined
+  if (!existing?.traceId || !existing?.spanId) return
 
   const updated = applyHttpParentToMeta(existing, httpParent)
   if (updated.parentId === existing.parentId && updated.httpParentSpanId === existing.httpParentSpanId) {
@@ -156,21 +158,19 @@ function reconcileOrchestrationHttpParent (instanceId, httpParent) {
   return updated
 }
 
-/**
- * Record the orchestration span identity while the HTTP span that started the
- * instance is still available, so any worker that later runs the orchestration
- * reads the HTTP span as its parent.
- */
+// Record the orchestration span identity while the HTTP span that started the
+// instance is still available, so any worker that later runs the orchestration
+// reads the HTTP span as its parent.
 function seedOrchestrationMetaFromHttpParent (instanceId, httpParent, functionName) {
-  if (!instanceId || !httpParent?.spanId) return undefined
+  if (!instanceId || !httpParent?.spanId) return
 
   const existing = readOrchestrationSpanMetaSync(instanceId)
-  if (existing?.traceId && existing?.spanId) {
+  if (existing?.traceId && existing.spanId) {
     return reconcileOrchestrationHttpParent(instanceId, httpParent)
   }
 
   const meta = createOrchestrationMetaFromHttpParent(instanceId, httpParent, functionName)
-  if (!meta) return undefined
+  if (!meta) return
 
   publishOrchestrationMetaSync(instanceId, meta)
   return meta
@@ -206,11 +206,9 @@ function ensureOrchestrationMeta (instanceId, invocationContext, functionName) {
   return meta
 }
 
-/**
- * The shared store is authoritative: it carries the orchestration parent, which
- * the tracestate marker cannot express. Tracestate is only a fallback for workers
- * that have no store record.
- */
+// The shared store is authoritative: it carries the orchestration parent, which
+// the tracestate marker cannot express. Tracestate is only a fallback for workers
+// that have no store record.
 function readOrchestrationSpanMetaSync (instanceId, traceContext) {
   if (instanceId) {
     if (META_CACHE.has(instanceId)) {
@@ -218,14 +216,14 @@ function readOrchestrationSpanMetaSync (instanceId, traceContext) {
     }
 
     const fromFile = readMetaFileSync(instanceId)
-    if (fromFile?.traceId && fromFile?.spanId) {
+    if (fromFile?.traceId && fromFile.spanId) {
       META_CACHE.set(instanceId, fromFile)
       return fromFile
     }
   }
 
   const fromTraceState = parseOrchestrationMetaFromTraceContext(traceContext)
-  if (fromTraceState?.traceId && fromTraceState?.spanId) {
+  if (fromTraceState?.traceId && fromTraceState.spanId) {
     return fromTraceState
   }
 }
@@ -235,8 +233,11 @@ async function readOrchestrationSpanMetaAsync (instanceId, traceContext) {
   if (cached) return cached
 
   const client = getTableClient()
-  if (!client || !instanceId) return undefined
+  if (!client || !instanceId) return
 
+  // Attempts are sequential by nature: each one only runs after the previous
+  // read failed, and the backoff grows between them.
+  /* eslint-disable no-await-in-loop */
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
       await ensureTable()
@@ -260,8 +261,7 @@ async function readOrchestrationSpanMetaAsync (instanceId, traceContext) {
       await new Promise(resolve => setTimeout(resolve, 20 * (attempt + 1)))
     }
   }
-
-  return undefined
+  /* eslint-enable no-await-in-loop */
 }
 
 function markOrchestrationMetaCompleted (instanceId) {

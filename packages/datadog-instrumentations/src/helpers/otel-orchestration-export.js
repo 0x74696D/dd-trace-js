@@ -12,10 +12,10 @@ const { resolveHttpParentForOrchestration } = require('./otel-orchestration-http
 
 function getParentFromTraceContext (traceContext) {
   const traceParent = traceContext?.traceParent
-  if (!traceParent) return undefined
+  if (!traceParent) return
 
   const parts = traceParent.split('-')
-  if (parts.length < 4) return undefined
+  if (parts.length < 4) return
 
   return {
     traceId: normalizeTraceId(parts[1]),
@@ -38,7 +38,7 @@ function createOrchestrationMeta (instanceId, invocationContext, functionName) {
 
     if (parentDdContext) {
       traceId = normalizeTraceId(parentDdContext._traceId)
-      parentId = parentId ?? normalizeSpanId(parentDdContext._spanId)
+      parentId ??= normalizeSpanId(parentDdContext._spanId)
     }
   }
 
@@ -57,14 +57,11 @@ function createOrchestrationMeta (instanceId, invocationContext, functionName) {
   }
 }
 
-/**
- * Build orchestration metadata from the HTTP span that called `startNew`.
- *
- * The orchestration runs later, often in another worker process, so its identity
- * has to be decided here while the HTTP span is still known.
- */
+// Build orchestration metadata from the HTTP span that called `startNew`. The
+// orchestration runs later, often in another worker process, so its identity has
+// to be decided here while the HTTP span is still known.
 function createOrchestrationMetaFromHttpParent (instanceId, httpParent, functionName) {
-  if (!httpParent?.traceId || !httpParent?.spanId) return undefined
+  if (!httpParent?.traceId || !httpParent.spanId) return
 
   return {
     instanceId,

@@ -2387,6 +2387,14 @@
         "default": "true"
       }
     ],
+    "DD_TRACE_AZURE_ORCHESTRATION_STORE_DIR": [
+      {
+        "implementation": "B",
+        "type": "string",
+        "default": null,
+        "internal": true
+      }
+    ],
     "DD_TRACE_AZURE_SERVICEBUS_BATCH_LINKS_ENABLED": [
       {
         "implementation": "A",

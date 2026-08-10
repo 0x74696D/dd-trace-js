@@ -2,14 +2,16 @@
 
 const api = require('@opentelemetry/api')
 
+const { writeTraceparent, writeTracestate } = require('../../../dd-trace/src/carrier')
+
 const ROOT_CONTEXT = api.ROOT_CONTEXT
 
 function carrierFromTraceContext (traceContext) {
   if (!traceContext) return null
 
   const carrier = {}
-  if (traceContext.traceParent) carrier.traceparent = traceContext.traceParent
-  if (traceContext.traceState) carrier.tracestate = traceContext.traceState
+  if (traceContext.traceParent) writeTraceparent(carrier, traceContext.traceParent)
+  if (traceContext.traceState) writeTracestate(carrier, traceContext.traceState)
 
   return Object.keys(carrier).length > 0 ? carrier : null
 }
@@ -23,7 +25,7 @@ function extractContext (traceContext) {
 
 function getInstanceId (invocationContext) {
   const attributes = invocationContext?.traceContext?.attributes
-  if (!attributes) return undefined
+  if (!attributes) return
 
   return attributes['durabletask.task.instance_id'] || attributes.DurableFunctionsInstanceId
 }
@@ -87,13 +89,13 @@ function buildSpanParentContext (args, trigger) {
   return extractContext(invocationContext?.traceContext)
 }
 
-async function buildSpanParentContextAsync (args, trigger) {
+function buildSpanParentContextAsync (args, trigger) {
   const invocationContext = getInvocationContext(args, trigger)
   if (trigger === 'durable-activity') {
     return resolveActivityParentContextAsync(invocationContext)
   }
 
-  return extractContext(invocationContext?.traceContext)
+  return Promise.resolve(extractContext(invocationContext?.traceContext))
 }
 
 function runWithTraceContext (traceContext, fn) {
