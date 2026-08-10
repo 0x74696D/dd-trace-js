@@ -94,6 +94,12 @@ class Tracer extends NoopProxy {
   /** @type {Record<string, number> | undefined} */
   #featureStates
 
+  /** @type {boolean | undefined} */
+  #profilerStarted
+
+  /** @type {string | undefined} */
+  #profilerRcValueSeen
+
   constructor () {
     super()
 
@@ -220,15 +226,15 @@ class Tracer extends NoopProxy {
       }
 
       if (config.profiling.DD_PROFILING_ENABLED === 'true') {
-        this._profilerStarted = this._startProfiler(config)
+        this.#profilerStarted = this._startProfiler(config)
       } else {
-        this._profilerStarted = false
+        this.#profilerStarted = false
         if (config.profiling.DD_PROFILING_ENABLED === 'auto') {
           const { SSIHeuristics } = require('./profiling/ssi-heuristics')
           const ssiHeuristics = new SSIHeuristics(config)
           ssiHeuristics.start()
           ssiHeuristics.onTriggered(() => {
-            this._profilerStarted = this._startProfiler(config)
+            this.#profilerStarted = this._startProfiler(config)
             ssiHeuristics.onTriggered() // deregister this callback
           })
         }
@@ -422,15 +428,15 @@ class Tracer extends NoopProxy {
     const enabled = config.profiling.DD_PROFILING_ENABLED
     if (enabled !== 'true') {
       // Reset the sentinel so a later re-enable retries a start, even after a prior failed attempt.
-      this._profilerRcValueSeen = enabled
+      this.#profilerRcValueSeen = enabled
       return
     }
     // Only retry on a change to this value, so a failed start isn't retried (and re-logged) on
     // every unrelated remote config update while the value stays unchanged.
-    if (this._profilerStarted || enabled === this._profilerRcValueSeen) return
-    this._profilerRcValueSeen = enabled
+    if (this.#profilerStarted || enabled === this.#profilerRcValueSeen) return
+    this.#profilerRcValueSeen = enabled
     log.debug('[proxy] Starting profiler via remote config')
-    this._profilerStarted = this._startProfiler(config)
+    this.#profilerStarted = this._startProfiler(config)
   }
 
   /**
@@ -456,11 +462,11 @@ class Tracer extends NoopProxy {
    * @override
    */
   profilerStarted () {
-    if (this._profilerStarted === undefined) {
+    if (this.#profilerStarted === undefined) {
       // injection hardening: this is only ever invoked from tests.
       throw new Error('profilerStarted() must be called after init()')
     }
-    return Promise.resolve(this._profilerStarted)
+    return Promise.resolve(this.#profilerStarted)
   }
 
   /**
