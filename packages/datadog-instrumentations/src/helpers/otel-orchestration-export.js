@@ -8,6 +8,7 @@ const OtelSpanContext = require('../../../dd-trace/src/opentelemetry/span_contex
 const { extractContext } = require('./azure-trace-context')
 const { getTracer, spanAttributes, endSpan } = require('./otel-azure-span')
 const { normalizeSpanId, normalizeTraceId } = require('./otel-orchestration-meta')
+const { resolveHttpParentForOrchestration } = require('./otel-orchestration-http-link')
 
 function getParentFromTraceContext (traceContext) {
   const traceParent = traceContext?.traceParent
@@ -24,17 +25,21 @@ function getParentFromTraceContext (traceContext) {
 
 function createOrchestrationMeta (instanceId, invocationContext, functionName) {
   const traceContext = invocationContext?.traceContext
+  const httpParent = resolveHttpParentForOrchestration(instanceId, traceContext)
   const fromHeader = getParentFromTraceContext(traceContext)
-  const parentContext = extractContext(traceContext)
-  const parentSpan = api.trace.getSpan(parentContext)
-  const parentDdContext = parentSpan?.spanContext()?._ddContext
 
-  let traceId = fromHeader?.traceId
-  let parentId = fromHeader?.parentId
+  let traceId = httpParent?.traceId ?? fromHeader?.traceId
+  let parentId = httpParent?.spanId ?? fromHeader?.parentId
 
-  if (!traceId && parentDdContext) {
-    traceId = normalizeTraceId(parentDdContext._traceId)
-    parentId = normalizeSpanId(parentDdContext._spanId)
+  if (!traceId) {
+    const parentContext = extractContext(traceContext)
+    const parentSpan = api.trace.getSpan(parentContext)
+    const parentDdContext = parentSpan?.spanContext()?._ddContext
+
+    if (parentDdContext) {
+      traceId = normalizeTraceId(parentDdContext._traceId)
+      parentId = parentId ?? normalizeSpanId(parentDdContext._spanId)
+    }
   }
 
   if (!traceId) {

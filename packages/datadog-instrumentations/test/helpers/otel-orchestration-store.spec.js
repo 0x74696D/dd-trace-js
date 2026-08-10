@@ -19,6 +19,8 @@ const {
   publishOrchestrationSpanMetaSync,
   readOrchestrationSpanMetaSync,
 } = require('../../src/helpers/otel-orchestration-store')
+const { createOrchestrationMeta } = require('../../src/helpers/otel-orchestration-export')
+const { publishHttpParentMeta } = require('../../src/helpers/otel-orchestration-http-link')
 const { buildSpanParentContext } = require('../../src/helpers/azure-trace-context')
 
 describe('otel-orchestration-meta', () => {
@@ -111,6 +113,22 @@ describe('otel-orchestration-store', () => {
     assert.equal(first.spanId, second.spanId)
     assert.equal(first.traceId, '00000000000000000000000000000001')
     assert.equal(first.status, 'open')
+  })
+
+  it('parents orchestration metadata to the HTTP span that started the instance', () => {
+    publishHttpParentMeta('abc123', {
+      traceId: '00000000000000000000000000000001',
+      spanId: '0000000000000004',
+    })
+
+    const meta = createOrchestrationMeta('abc123', {
+      traceContext: {
+        traceParent: '00-00000000000000000000000000000001-0000000000000099-00',
+      },
+    }, 'PizzaOrderOrchestration')
+
+    assert.equal(meta.parentId, '0000000000000004')
+    assert.equal(meta.traceId, '00000000000000000000000000000001')
   })
 
   it('exports one orchestration span on completion', () => {
