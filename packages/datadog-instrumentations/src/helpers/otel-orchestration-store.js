@@ -11,6 +11,7 @@ const {
 } = require('./otel-orchestration-meta')
 const {
   createOrchestrationMeta,
+  createOrchestrationMetaFromHttpParent,
   exportOrchestrationSpanFromMeta,
 } = require('./otel-orchestration-export')
 const {
@@ -120,6 +121,10 @@ function publishOrchestrationMetaSync (instanceId, meta) {
       rowKey: instanceId,
       traceId: normalized.traceId,
       spanId: normalized.spanId,
+      parentId: normalized.parentId ?? '',
+      httpParentSpanId: normalized.httpParentSpanId ?? '',
+      functionName: normalized.functionName ?? '',
+      pendingStart: normalized.pendingStart === true,
       startTime: normalized.startTime,
       status: normalized.status || 'open',
     }, 'Replace'))
@@ -151,12 +156,41 @@ function reconcileOrchestrationHttpParent (instanceId, httpParent) {
   return updated
 }
 
+/**
+ * Record the orchestration span identity while the HTTP span that started the
+ * instance is still available, so any worker that later runs the orchestration
+ * reads the HTTP span as its parent.
+ */
+function seedOrchestrationMetaFromHttpParent (instanceId, httpParent, functionName) {
+  if (!instanceId || !httpParent?.spanId) return undefined
+
+  const existing = readOrchestrationSpanMetaSync(instanceId)
+  if (existing?.traceId && existing?.spanId) {
+    return reconcileOrchestrationHttpParent(instanceId, httpParent)
+  }
+
+  const meta = createOrchestrationMetaFromHttpParent(instanceId, httpParent, functionName)
+  if (!meta) return undefined
+
+  publishOrchestrationMetaSync(instanceId, meta)
+  return meta
+}
+
 function ensureOrchestrationMeta (instanceId, invocationContext, functionName) {
   const traceContext = invocationContext?.traceContext
   let meta = readOrchestrationSpanMetaSync(instanceId, traceContext)
 
   if (!meta?.traceId || !meta?.spanId) {
     meta = createOrchestrationMeta(instanceId, invocationContext, functionName)
+    publishOrchestrationMetaSync(instanceId, meta)
+  } else if (meta.pendingStart) {
+    // Seeded at startNew time; the orchestration is only starting now.
+    meta = {
+      ...meta,
+      functionName: meta.functionName || functionName,
+      startTime: Date.now(),
+      pendingStart: undefined,
+    }
     publishOrchestrationMetaSync(instanceId, meta)
   }
 
@@ -172,32 +206,28 @@ function ensureOrchestrationMeta (instanceId, invocationContext, functionName) {
   return meta
 }
 
+/**
+ * The shared store is authoritative: it carries the orchestration parent, which
+ * the tracestate marker cannot express. Tracestate is only a fallback for workers
+ * that have no store record.
+ */
 function readOrchestrationSpanMetaSync (instanceId, traceContext) {
-  let meta
+  if (instanceId) {
+    if (META_CACHE.has(instanceId)) {
+      return META_CACHE.get(instanceId)
+    }
 
-  if (instanceId && META_CACHE.has(instanceId)) {
-    meta = META_CACHE.get(instanceId)
-  } else if (instanceId) {
     const fromFile = readMetaFileSync(instanceId)
     if (fromFile?.traceId && fromFile?.spanId) {
       META_CACHE.set(instanceId, fromFile)
-      meta = fromFile
+      return fromFile
     }
   }
 
   const fromTraceState = parseOrchestrationMetaFromTraceContext(traceContext)
   if (fromTraceState?.traceId && fromTraceState?.spanId) {
-    if (meta) {
-      return {
-        ...meta,
-        traceId: fromTraceState.traceId,
-        spanId: fromTraceState.spanId,
-      }
-    }
     return fromTraceState
   }
-
-  return meta
 }
 
 async function readOrchestrationSpanMetaAsync (instanceId, traceContext) {
@@ -214,6 +244,10 @@ async function readOrchestrationSpanMetaAsync (instanceId, traceContext) {
       const meta = {
         traceId: entity.traceId,
         spanId: entity.spanId,
+        parentId: entity.parentId || undefined,
+        httpParentSpanId: entity.httpParentSpanId || undefined,
+        functionName: entity.functionName || undefined,
+        pendingStart: entity.pendingStart === true ? true : undefined,
         startTime: entity.startTime,
         status: entity.status,
       }
@@ -286,4 +320,5 @@ module.exports = {
   readOrchestrationSpanMetaAsync,
   readOrchestrationSpanMetaSync,
   reconcileOrchestrationHttpParent,
+  seedOrchestrationMetaFromHttpParent,
 }

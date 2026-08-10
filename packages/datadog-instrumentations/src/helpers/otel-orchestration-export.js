@@ -57,6 +57,29 @@ function createOrchestrationMeta (instanceId, invocationContext, functionName) {
   }
 }
 
+/**
+ * Build orchestration metadata from the HTTP span that called `startNew`.
+ *
+ * The orchestration runs later, often in another worker process, so its identity
+ * has to be decided here while the HTTP span is still known.
+ */
+function createOrchestrationMetaFromHttpParent (instanceId, httpParent, functionName) {
+  if (!httpParent?.traceId || !httpParent?.spanId) return undefined
+
+  return {
+    instanceId,
+    functionName,
+    traceId: normalizeTraceId(httpParent.traceId),
+    spanId: normalizeSpanId(createId()),
+    parentId: normalizeSpanId(httpParent.spanId),
+    httpParentSpanId: normalizeSpanId(httpParent.spanId),
+    startTime: Date.now(),
+    // Replaced with the real start time on the first orchestration turn.
+    pendingStart: true,
+    status: 'open',
+  }
+}
+
 function exportOrchestrationSpanFromMeta (tracerName, meta, { error, endTime } = {}) {
   if (!meta?.traceId || !meta?.spanId) return false
 
@@ -89,6 +112,7 @@ function exportOrchestrationSpanFromMeta (tracerName, meta, { error, endTime } =
 
 module.exports = {
   createOrchestrationMeta,
+  createOrchestrationMetaFromHttpParent,
   exportOrchestrationSpanFromMeta,
   getParentFromTraceContext,
 }

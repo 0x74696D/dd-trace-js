@@ -83,14 +83,16 @@ function applyHttpParentToMeta (meta, httpParent) {
   }
 }
 
-function patchDurableClient () {
+/**
+ * Patch the application's DurableClient class.
+ *
+ * The class must be handed in by the module hook: requiring `durable-functions`
+ * from inside the tracer would resolve against the tracer's own dependencies,
+ * not the application's copy, so the patch would target the wrong class.
+ */
+function patchDurableClient (DurableClient) {
   const shimmer = require('../../../datadog-shimmer')
-  let DurableClient
-  try {
-    DurableClient = require('durable-functions/lib/src/durableClient/DurableClient').DurableClient
-  } catch {
-    return
-  }
+  if (typeof DurableClient?.prototype?.startNew !== 'function') return
 
   shimmer.wrap(DurableClient.prototype, 'startNew', startNew => {
     return async function (...args) {
@@ -105,6 +107,11 @@ function patchDurableClient () {
 
       if (instanceId && spanMeta) {
         publishHttpParentMeta(instanceId, spanMeta)
+
+        // The orchestration usually runs in another worker process, which cannot see
+        // the in-process maps above, so persist its identity to the shared store now.
+        const { seedOrchestrationMetaFromHttpParent } = require('./otel-orchestration-store')
+        seedOrchestrationMetaFromHttpParent(instanceId, spanMeta, typeof args[0] === 'string' ? args[0] : undefined)
       }
 
       return instanceId

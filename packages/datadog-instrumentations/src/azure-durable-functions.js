@@ -20,10 +20,21 @@ addHook({ name: 'durable-functions', versions: ['>=3'], patchDefault: false }, (
 
   if (require('./helpers/otel-azure-enabled').isOtelAzureInstrumentationEnabled()) {
     require('./otel-azure-durable-functions').patchApp(app)
-    require('./helpers/otel-orchestration-http-link').patchDurableClient()
   }
 
   return df
+})
+
+addHook({
+  name: 'durable-functions',
+  versions: ['>=3'],
+  file: 'lib/src/durableClient/DurableClient.js',
+}, (durableClientModule) => {
+  if (require('./helpers/otel-azure-enabled').isOtelAzureInstrumentationEnabled()) {
+    require('./helpers/otel-orchestration-http-link').patchDurableClient(durableClientModule.DurableClient)
+  }
+
+  return durableClientModule
 })
 
 function entityWrapper (method) {

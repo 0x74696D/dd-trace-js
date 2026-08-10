@@ -19,6 +19,7 @@ const {
   publishOrchestrationSpanMetaSync,
   readOrchestrationSpanMetaSync,
   reconcileOrchestrationHttpParent,
+  seedOrchestrationMetaFromHttpParent,
 } = require('../../src/helpers/otel-orchestration-store')
 const { createOrchestrationMeta } = require('../../src/helpers/otel-orchestration-export')
 const { publishHttpParentMeta } = require('../../src/helpers/otel-orchestration-http-link')
@@ -151,7 +152,55 @@ describe('otel-orchestration-store', () => {
     assert.equal(readOrchestrationSpanMetaSync('abc123').parentId, '0000000000000004')
   })
 
-  it('preserves reconciled HTTP parent when tracestate is present at export time', () => {
+  it('seeds orchestration metadata from the HTTP parent at startNew time', () => {
+    const meta = seedOrchestrationMetaFromHttpParent('seed-new', {
+      traceId: '00000000000000000000000000000001',
+      spanId: '0000000000000004',
+    }, 'PizzaPartyOrchestration')
+
+    assert.equal(meta.traceId, '00000000000000000000000000000001')
+    assert.equal(meta.parentId, '0000000000000004')
+    assert.equal(meta.spanId.length, 16)
+    assert.equal(meta.pendingStart, true)
+    // A worker with no in-process state must still read the HTTP parent.
+    assert.equal(readOrchestrationSpanMetaSync('seed-new').parentId, '0000000000000004')
+  })
+
+  it('keeps the seeded HTTP parent when the orchestration starts on another worker', () => {
+    seedOrchestrationMetaFromHttpParent('seed-other-worker', {
+      traceId: '00000000000000000000000000000001',
+      spanId: '0000000000000004',
+    }, 'PizzaPartyOrchestration')
+
+    const seeded = readOrchestrationSpanMetaSync('seed-other-worker')
+
+    // Azure hands the orchestration its own unrelated trace context.
+    const meta = ensureOrchestrationMeta('seed-other-worker', {
+      traceContext: {
+        traceParent: '00-99999999999999999999999999999999-0000000000000099-01',
+      },
+    }, 'PizzaPartyOrchestration')
+
+    assert.equal(meta.parentId, '0000000000000004')
+    assert.equal(meta.traceId, '00000000000000000000000000000001')
+    assert.equal(meta.spanId, seeded.spanId)
+    assert.equal(meta.pendingStart, undefined)
+    assert.ok(meta.startTime >= seeded.startTime)
+  })
+
+  it('does not seed twice for the same instance', () => {
+    const httpParent = {
+      traceId: '00000000000000000000000000000001',
+      spanId: '0000000000000004',
+    }
+
+    const first = seedOrchestrationMetaFromHttpParent('seed-once', httpParent, 'PizzaPartyOrchestration')
+    const second = seedOrchestrationMetaFromHttpParent('seed-once', httpParent, 'PizzaPartyOrchestration')
+
+    assert.equal(first.spanId, second.spanId)
+  })
+
+  it('prefers the stored HTTP parent over the tracestate marker', () => {
     publishOrchestrationMetaSync('abc123', {
       traceId: '00000000000000000000000000000001',
       spanId: '0000000000000002',
