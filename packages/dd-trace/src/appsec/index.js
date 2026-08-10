@@ -14,6 +14,7 @@ const {
   multerParser,
   fastifyBodyParser,
   fastifyCookieParser,
+  http2ServerRequestAdopt,
   incomingHttpRequestStart,
   incomingHttpRequestEnd,
   lambdaStartInvocation,
@@ -52,6 +53,7 @@ const rasp = require('./rasp')
 const responseAnalyzedSet = new WeakSet()
 const storedResponseHeaders = new WeakMap()
 const storedBodies = new WeakMap()
+const adoptedRequests = new WeakMap()
 
 let isEnabled = false
 let config
@@ -82,6 +84,7 @@ function enable (_config) {
     bodyParser.subscribe(onRequestBodyParsed)
     multerParser.subscribe(onRequestBodyParsed)
     cookieParser.subscribe(onRequestCookieParser)
+    http2ServerRequestAdopt.subscribe(onHttp2ServerRequestAdopt)
     incomingHttpRequestStart.subscribe(incomingHttpStartTranslator)
     incomingHttpRequestEnd.subscribe(incomingHttpEndTranslator)
     passportVerify.subscribe(onPassportVerify) // possible optimization: only subscribe if collection mode is enabled
@@ -122,12 +125,29 @@ function enable (_config) {
 
 const analyzedBodies = new WeakSet()
 
+/**
+ * @param {{ req: object }} data
+ * @returns {void}
+ */
+function onHttp2ServerRequestAdopt ({ req }) {
+  adoptedRequests.set(req, getActiveRequest())
+}
+
+/**
+ * @param {object} req
+ * @returns {object}
+ */
+function getCanonicalRequest (req) {
+  return adoptedRequests.get(req) ?? req
+}
+
 function onRequestBodyParsed ({ req, res, body, abortController }) {
   if (body === undefined || body === null) return
 
   if (!req) {
     req = getActiveRequest()
   }
+  req = getCanonicalRequest(req)
 
   const rootSpan = web.root(req)
   if (!rootSpan) return
@@ -156,6 +176,7 @@ const analyzedCookies = new WeakSet()
 function onRequestCookieParser ({ req, res, abortController, cookies }) {
   if (!cookies || typeof cookies !== 'object') return
 
+  req = getCanonicalRequest(req)
   const rootSpan = web.root(req)
   if (!rootSpan) return
 
@@ -320,6 +341,7 @@ function onRequestQueryParsed ({ req, res, query, abortController }) {
   if (!req) {
     req = getActiveRequest()
   }
+  req = getCanonicalRequest(req)
 
   const rootSpan = web.root(req)
   if (!rootSpan) return
@@ -336,6 +358,7 @@ function onRequestQueryParsed ({ req, res, query, abortController }) {
 }
 
 function onRequestProcessParams ({ req, res, abortController, params }) {
+  req = getCanonicalRequest(req)
   const rootSpan = web.root(req)
   if (!rootSpan) return
 
@@ -352,6 +375,7 @@ function onRequestProcessParams ({ req, res, abortController, params }) {
 
 function onResponseBody ({ req, res, body }) {
   if (!body || typeof body !== 'object') return
+  req = getCanonicalRequest(req)
   if (apiSecurity.sampleRequest(req, res) !== apiSecurity.SamplingDecision.SAMPLE) return
 
   // we don't support blocking at this point, so no results needed
@@ -532,6 +556,7 @@ function disable () {
   if (bodyParser.hasSubscribers) bodyParser.unsubscribe(onRequestBodyParsed)
   if (multerParser.hasSubscribers) multerParser.unsubscribe(onRequestBodyParsed)
   if (cookieParser.hasSubscribers) cookieParser.unsubscribe(onRequestCookieParser)
+  if (http2ServerRequestAdopt.hasSubscribers) http2ServerRequestAdopt.unsubscribe(onHttp2ServerRequestAdopt)
   if (incomingHttpRequestStart.hasSubscribers) incomingHttpRequestStart.unsubscribe(incomingHttpStartTranslator)
   if (incomingHttpRequestEnd.hasSubscribers) incomingHttpRequestEnd.unsubscribe(incomingHttpEndTranslator)
   if (passportVerify.hasSubscribers) passportVerify.unsubscribe(onPassportVerify)
